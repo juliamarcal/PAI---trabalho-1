@@ -35,23 +35,26 @@ class InterfaceGrafica:
         self.canvas.configure(yscrollcommand=scrollbar_vertical.set, xscrollcommand=scrollbar_horizontal.set)
 
         # Inicializar variáveis de zoom
-        self.zoom_factor = 1.0
+        self.zoom_factor = 0.6
         self.image_id = None
+        self.caminho_imagem = None  # Store the path to the opened image
 
         # Adicionar evento de rolagem do mouse para zoom
         self.canvas.bind("<MouseWheel>", self.zoom_mouse)
 
-        # Botão para zoom in
-        btn_zoom_in = tk.Button(self.root, text="Zoom In", command=self.zoom_in)
-        btn_zoom_in.pack()
-
-        # Botão para zoom out
-        btn_zoom_out = tk.Button(self.root, text="Zoom Out", command=self.zoom_out)
-        btn_zoom_out.pack()
+        # Slider for zoom control
+        self.zoom_slider = tk.Scale(self.root, from_=0.6, to=5, orient=tk.HORIZONTAL, resolution=0.1, label="Zoom", command=self.update_zoom_from_slider)
+        self.zoom_slider.set(0.6)
+        self.zoom_slider.pack()
 
     def abrir_imagem(self):
         # Abrir a caixa de diálogo para selecionar a imagem
-        caminho_imagem = filedialog.askopenfilename(filetypes=[("Imagens", "*.png;*.jpg")])
+        caminho_imagem = filedialog.askopenfilename(
+            initialdir="/path/to/initial/directory",
+            filetypes=[("Imagens", "*.png;*.jpg")]
+        )
+
+        self.caminho_imagem = caminho_imagem  # Store the path to the opened image
 
         # Exibir a imagem no canvas
         imagem = Image.open(caminho_imagem)
@@ -72,24 +75,37 @@ class InterfaceGrafica:
         self.canvas.image = imagem  # Manter uma referência para evitar a coleta de lixo
 
     def zoom_in(self):
-        self.zoom_factor *= 1.2
+        current_zoom = self.zoom_slider.get()
+        new_zoom = min(5.0, current_zoom * 1.2)
+        self.zoom_slider.set(new_zoom)
         self.atualizar_zoom()
 
     def zoom_out(self):
-        self.zoom_factor /= 1.2
+        current_zoom = self.zoom_slider.get()
+        new_zoom = max(0.6, current_zoom / 1.2)
+        self.zoom_slider.set(new_zoom)
         self.atualizar_zoom()
 
     def zoom_mouse(self, event):
         # Evento de rolagem do mouse para zoom
         if event.delta > 0:
-            self.zoom_factor *= 1.2
+            self.zoom_in()
         else:
-            self.zoom_factor /= 1.2
-        self.atualizar_zoom(event.x, event.y)
+            self.zoom_out()
 
     def atualizar_zoom(self, x=None, y=None):
-        # Atualizar o zoom considerando a posição do mouse
-        self.canvas.scale(self.image_id, None, None, self.zoom_factor, self.zoom_factor)
+        zoom_value = self.zoom_slider.get()
+        imagem = Image.open(self.caminho_imagem)
+        tamanho_redimensionado = (int(imagem.width * zoom_value), int(imagem.height * zoom_value))
+        imagem_resized = imagem.resize(tamanho_redimensionado, Image.ANTIALIAS)
+        imagem_tk = ImageTk.PhotoImage(imagem_resized)
+
+        # Update canvas with the new resized image
+        self.canvas.itemconfig(self.image_id, image=imagem_tk)
+        self.canvas.image = imagem_tk  # Keep a reference to avoid garbage collection
+
+    def update_zoom_from_slider(self, value):
+        self.atualizar_zoom()
 
     
 if __name__ == "__main__":
