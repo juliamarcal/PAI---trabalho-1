@@ -1,6 +1,14 @@
+import os
 import tkinter as tk
 from tkinter import filedialog, ttk
 from PIL import Image, ImageTk
+import pandas as pd
+from skimage import color, filters
+import cv2
+import numpy as np
+from skimage.segmentation import flood_fill
+# import Classification
+# from Segmentation import perform_segmentation
 
 class InterfaceGrafica:
     def __init__(self, root):
@@ -38,21 +46,44 @@ class InterfaceGrafica:
         self.zoom_factor = 0.6
         self.image_id = None
         self.caminho_imagem = None  # Store the path to the opened image
+        self.canvas.bind("<MouseWheel>", self.zoom_mouse) # zoom com mouse
 
-        # Adicionar evento de rolagem do mouse para zoom
-        self.canvas.bind("<MouseWheel>", self.zoom_mouse)
-
-        # Slider for zoom control
+        # Slider zoom
         self.zoom_slider = tk.Scale(self.root, from_=0.6, to=5, orient=tk.HORIZONTAL, resolution=0.1, label="Zoom", command=self.update_zoom_from_slider)
         self.zoom_slider.set(0.6)
         self.zoom_slider.pack()
+        
+        # Campo de texto para o valor de N
+        self.label_n = tk.Label(self.root, text="Valor de N:")
+        self.label_n.pack()
+        self.entry_n = tk.Entry(self.root)
+        self.entry_n.insert(0, "100")  # Valor padrão
+        self.entry_n.pack()
+
+        # Botão de segmentação
+        botao_segmentar = tk.Button(self.root, text="Segmentar", command=self.segmentar_nucleos)
+        botao_segmentar.pack()
+        
+        # Botão de segmentação por crescimento de região
+        botao_segmentar_crescimento = tk.Button(self.root, text="Segmentar - crescimento de reg", command=self.crescimento_regiao)
+        botao_segmentar_crescimento.pack()
+        
+        # Botão de caracterizar
+        botao_caracterizar = tk.Button(self.root, text="caracterizar nucleos", command=self.caracterizar_nucleos)
+        botao_caracterizar.pack()
+        
+        # Botão de classificação
+        botao_classificar = tk.Button(self.root, text="classificar nucleos", command=self.classificar_nucleos)
+        botao_classificar.pack()
 
     def abrir_imagem(self):
         # Abrir a caixa de diálogo para selecionar a imagem
-        caminho_imagem = filedialog.askopenfilename(
-            initialdir="/path/to/initial/directory",
-            filetypes=[("Imagens", "*.png;*.jpg")]
-        )
+        # caminho_imagem = filedialog.askopenfilename(
+        #     initialdir="/path/to/initial/directory",
+        #     filetypes=[("Imagens", "*.png;*.jpg")]
+        # )
+        
+        caminho_imagem = "base\\00b1e59ebc3e7be500ef7548207d44e2.png"
 
         self.caminho_imagem = caminho_imagem  # Store the path to the opened image
 
@@ -74,6 +105,7 @@ class InterfaceGrafica:
         self.canvas.itemconfig(self.image_id, image=imagem)  # Atualizar a imagem
         self.canvas.image = imagem  # Manter uma referência para evitar a coleta de lixo
 
+# funções para zoom
     def zoom_in(self):
         current_zoom = self.zoom_slider.get()
         new_zoom = min(5.0, current_zoom * 1.2)
@@ -107,7 +139,90 @@ class InterfaceGrafica:
     def update_zoom_from_slider(self, value):
         self.atualizar_zoom()
 
+
+# Segmentação - Transformada de Hough para círculos (HoughCircles)
+    def segmentar_nucleos(self):
+        imagem = cv2.imread(self.caminho_imagem)
+
+        imagem_gray = cv2.cvtColor(imagem, cv2.COLOR_BGR2GRAY) # Converte a imagem para escala de cinza
+
+        # Aplica um filtro para realçar as características
+        imagem_filt = cv2.medianBlur(imagem_gray, 5)
+
+        # Aplica o detector de círculos de Hough
+        circles = cv2.HoughCircles(imagem_filt, cv2.HOUGH_GRADIENT, dp=1, minDist=20,
+                                param1=50, param2=30, minRadius=5, maxRadius=30)
+
+        if circles is not None:
+            # Converte as coordenadas para inteiros
+            circles = np.uint16(np.around(circles))
+
+            # Lista para armazenar as sub-imagens
+            sub_images = []
+
+            for i in circles[0, :]:
+                # Obtém as coordenadas do círculo
+                centro = (i[0], i[1])
+
+                # Recorta uma região 100x100 ao redor do centro
+                tamanho_n = int(self.entry_n.get())
+                sub_image = imagem[centro[1]-tamanho_n//2:centro[1]+tamanho_n//2, centro[0]-tamanho_n//2:centro[0]+tamanho_n//2]
+
+                # Armazena a sub-imagem
+                sub_images.append(sub_image)
+
+                # Salva a sub-imagem em um arquivo
+                nome_arquivo = f'nucleo_{centro[0]}_{centro[1]}.png'
+                caminho_completo = os.path.join("segmentation_images", nome_arquivo)
+                cv2.imwrite(caminho_completo, sub_image)
+
+            return sub_images
+        else:
+            print("Nenhum núcleo detectado.")
+            return None
+
+# Segmentação por crescimento de região
+    def cres_regiao(self, imagem_gray, seed_x, seed_y):
+        _, binarizada = cv2.threshold(imagem_gray, 0, 255, cv2.THRESH_BINARY)
+        imagem_segmentada = flood_fill(binarizada, (seed_y, seed_x), 255)
+        return imagem_segmentada
+
+    def crescimento_regiao(self):
+        # imagem = cv2.imread(self.caminho_imagem)
+
+        # Selecionar diretamente o arquivo "classifications.csv"
+        caminho_csv = "classifications.csv"
+        dados = pd.read_csv(caminho_csv)
+
+        # Exibir a imagem no canvas
+        imagem = cv2.imread(self.caminho_imagem)
+        imagem_gray = cv2.cvtColor(imagem, cv2.COLOR_BGR2GRAY)
+
+        # Obter as coordenadas do núcleo do arquivo CSV
+        coordenadas_nucleos = [(int(x), int(y)) for x, y in zip(dados['nucleus_x'], dados['nucleus_y'])]
+
+        # Lista para armazenar as sub-imagens segmentadas
+        sub_images_segmentadas = []
+
+        for centro in coordenadas_nucleos:
+            imagem_segmentada = self.cres_regiao(imagem_gray, centro[0], centro[1])
+            sub_images_segmentadas.append(imagem_segmentada)
+
+            nome_arquivo_segmentado = f'nucleo_{centro[0]}_{centro[1]}_segmentado.png'
+            caminho_completo_segmentado = os.path.join("segmentation_images", nome_arquivo_segmentado)
+            cv2.imwrite(caminho_completo_segmentado, imagem_segmentada)
+
+        return sub_images_segmentadas
+
+# Classificação
+    def classificar_nucleos(self):
+        return
+
+# Caracterização
+    def caracterizar_nucleos(self):
+        return
     
+# main loop
 if __name__ == "__main__":
     root = tk.Tk()
     app = InterfaceGrafica(root)
