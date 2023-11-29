@@ -91,6 +91,7 @@ class InterfaceGrafica:
         # Atualizar o zoom considerando a posição do mouse
         self.canvas.scale(self.image_id, None, None, self.zoom_factor, self.zoom_factor)
 
+    
 if __name__ == "__main__":
     root = tk.Tk()
     app = InterfaceGrafica(root)
