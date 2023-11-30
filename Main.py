@@ -1,18 +1,23 @@
 import os
 import tkinter as tk
-from tkinter import filedialog, ttk
+from tkinter import ttk
 from PIL import Image, ImageTk
 import pandas as pd
-from skimage import color, filters
 import cv2
 import numpy as np
 from skimage.segmentation import flood_fill
-# import Classification
-# from Segmentation import perform_segmentation
+from skimage import measure
+from skimage.measure import regionprops
+from sklearn.model_selection import cross_val_score, train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn import metrics
+
+
 
 class InterfaceGrafica:
     def __init__(self, root):
         self.root = root
+        self.caminho_imagem = 'base\\00b1e59ebc3e7be500ef7548207d44e2.png'
         self.root.title("Processamento de Imagens")
 
         # Tamanho fixo para o Canvas com padding
@@ -175,6 +180,8 @@ class InterfaceGrafica:
                 nome_arquivo = f'nucleo_{centro[0]}_{centro[1]}.png'
                 caminho_completo = os.path.join("segmentation_images", nome_arquivo)
                 cv2.imwrite(caminho_completo, sub_image)
+            
+            #self.caracterizar_nucleos(sub_images)
 
             return sub_images
         else:
@@ -214,14 +221,56 @@ class InterfaceGrafica:
 
         return sub_images_segmentadas
 
-# Classificação
-    def classificar_nucleos(self):
-        return
-
 # Caracterização
     def caracterizar_nucleos(self):
-        return
+        resultados_df = pd.DataFrame(columns=['area', 'perimetro', 'circunferencia','raio_maximo','raio_minimo','curva_phi_s','coordenada_x', 'coordenada_y'])
+        #for sub_image in sub_images:
+        image = Image.open(self.caminho_imagem)
+        imagem_cinza = cv2.cvtColor(np.array(image), cv2.COLOR_BGR2GRAY)
+        _,imagem_binaria = cv2.threshold(imagem_cinza, 128,255, cv2.THRESH_BINARY)
+        caracterizacao = measure.label(imagem_binaria,background = 0)
+
+        for regiao in regionprops(caracterizacao):
+            area = regiao.area
+            perimetro = regiao.perimeter
+            circunferencia = (4 * np.pi * area) / (perimetro ** 2)
+            raio_maximo = perimetro / (2 * np.pi)
+            raio_minimo = np.sqrt(area / np.pi)
+            curva_phi_s = (4 * np.pi * area) / (perimetro ** 2)
+            coordenadas = regiao.coords
+            ponto_nucleo = np.mean(coordenadas, axis=0)
+            coordenada_x, coordenada_y = ponto_nucleo[0], ponto_nucleo[1]
+            resultados_df.loc[len(resultados_df)] = [area, perimetro, circunferencia,raio_maximo,raio_minimo,curva_phi_s,coordenada_x,coordenada_y]
+
+        resultados_df.to_csv('resultados_caracterizacao.csv', index=False)
+
+# Classificação
+    def classificar_nucleos(self):
+        tabela1_path = "resultados_caracterizacao.csv"
+        dados_tabela1 = pd.read_csv(tabela1_path)
+
+        tabela2_path = "classifications.csv"
+        dados_tabela2 = pd.read_csv(tabela2_path)
+
+        dados_completos = pd.merge(dados_tabela1, dados_tabela2, left_on=['coordenada_x', 'coordenada_y'], right_on=['nucleus_x', 'nucleus_y'], how='inner')
+
+        caracteristicas = dados_completos[['area', 'perimetro', 'circunferencia', 'raio_maximo','raio_minimo','curva_phi_s', 'coordenada_x', 'coordenada_y']]
+        rotulos = dados_completos['bethesda_system']
+
+        modelo = RandomForestClassifier(n_estimators=100, random_state=42)
+        modelo.fit(caracteristicas, rotulos)
+
+        acuracia = metrics.accuracy_score(rotulos, modelo)
+        print(f'Acurácia do modelo: {acuracia}')
+
+
+        dados_tabela1['classificacao_nucleo'] = modelo.predict(dados_tabela1[['area', 'perimetro', 'circunferencia', 'raio_maximo','raio_minimo', 'curva_phi_s', 'coordenada_x', 'coordenada_y']])
+
+        # Salvar os resultados
+        resultados_path = "resultados.csv"
+        dados_tabela1.to_csv(resultados_path, index=False)
     
+       
 # main loop
 if __name__ == "__main__":
     root = tk.Tk()
