@@ -1,3 +1,4 @@
+import math
 import os
 import tkinter as tk
 from tkinter import ttk
@@ -164,12 +165,13 @@ class InterfaceGrafica:
 
             # Lista para armazenar as sub-imagens
             sub_images = []
+            centros = []
 
             for i in circles[0, :]:
                 # Obtém as coordenadas do círculo
                 centro = (i[0], i[1])
-
-                # Recorta uma região 100x100 ao redor do centro
+                centros.append(centro)
+                # Recorta uma região nxn ao redor do centro
                 tamanho_n = int(self.entry_n.get())
                 sub_image = imagem[centro[1]-tamanho_n//2:centro[1]+tamanho_n//2, centro[0]-tamanho_n//2:centro[0]+tamanho_n//2]
 
@@ -181,8 +183,8 @@ class InterfaceGrafica:
                 caminho_completo = os.path.join("segmentation_images", nome_arquivo)
                 cv2.imwrite(caminho_completo, sub_image)
             
-            #self.caracterizar_nucleos(sub_images)
-
+            self.caracterizar_nucleos(sub_images)
+            self.comparar_centros(centros)
             return sub_images
         else:
             print("Nenhum núcleo detectado.")
@@ -191,86 +193,151 @@ class InterfaceGrafica:
 # Segmentação por crescimento de região
     def cres_regiao(self, imagem_gray, seed_x, seed_y):
         _, binarizada = cv2.threshold(imagem_gray, 0, 255, cv2.THRESH_BINARY)
-        imagem_segmentada = flood_fill(binarizada, (seed_y, seed_x), 255)
-        return imagem_segmentada
+
+        h, w = binarizada.shape[:2]
+
+        # Convertendo para inteiros
+        seed_x, seed_y = int(seed_x), int(seed_y)
+
+        # Máscara para armazenar pixels segmentados
+        mask = np.zeros_like(binarizada)
+
+        # Pilha para armazenar pixels a serem verificados
+        stack = [(seed_y, seed_x)]
+
+        # Critério de crescimento de região (pode ajustar conforme necessário)
+        criterio = 30
+
+        while stack:
+            y, x = stack.pop()
+
+            if 0 <= y < h and 0 <= x < w and not mask[y, x] and abs(int(imagem_gray[y, x]) - int(imagem_gray[seed_y, seed_x])) < criterio:
+                mask[y, x] = 255
+
+                # Adicionar vizinhos à pilha
+                stack.extend([(y + 1, x), (y - 1, x), (y, x + 1), (y, x - 1)])
+
+        return mask
 
     def crescimento_regiao(self):
-        # imagem = cv2.imread(self.caminho_imagem)
-
-        # Selecionar diretamente o arquivo "classifications.csv"
-        caminho_csv = "classifications.csv"
-        dados = pd.read_csv(caminho_csv)
-
-        # Exibir a imagem no canvas
-        imagem = cv2.imread(self.caminho_imagem)
-        imagem_gray = cv2.cvtColor(imagem, cv2.COLOR_BGR2GRAY)
+        imagem_original = cv2.imread(self.caminho_imagem)
+        imagem_gray = cv2.cvtColor(imagem_original, cv2.COLOR_BGR2GRAY)
+        altura, largura = imagem_original.shape[:2]
 
         # Obter as coordenadas do núcleo do arquivo CSV
-        coordenadas_nucleos = [(int(x), int(y)) for x, y in zip(dados['nucleus_x'], dados['nucleus_y'])]
+        coordenadas_nucleos = self.obter_informacoes_csv()[['nucleus_x', 'nucleus_y','cell_id']]
 
         # Lista para armazenar as sub-imagens segmentadas
         sub_images_segmentadas = []
+        tamanho_n = int(self.entry_n.get())
 
-        for centro in coordenadas_nucleos:
-            imagem_segmentada = self.cres_regiao(imagem_gray, centro[0], centro[1])
-            sub_images_segmentadas.append(imagem_segmentada)
+        for centro in coordenadas_nucleos.itertuples(index=False):
+            x, y = centro.nucleus_x, centro.nucleus_y
+            if 0 <= x < largura and 0 <= y < altura:
+                imagem_segmentada = self.cres_regiao(imagem_gray, x, y)
+                
+                sub_images_segmentadas.append(imagem_segmentada)
 
-            nome_arquivo_segmentado = f'nucleo_{centro[0]}_{centro[1]}_segmentado.png'
-            caminho_completo_segmentado = os.path.join("segmentation_images", nome_arquivo_segmentado)
-            cv2.imwrite(caminho_completo_segmentado, imagem_segmentada)
+                imagem_colorida = imagem_original.copy()
+                imagem_colorida[imagem_segmentada != 255] = [0, 0, 0]  # Pintar pixels fora da máscara de preto
+                
+                #recortar a imagem
+                imagem_recortada = imagem_colorida[centro[1]-tamanho_n//2:centro[1]+tamanho_n//2, centro[0]-tamanho_n//2:centro[0]+tamanho_n//2]
 
+                nome_arquivo_segmentado = f'{centro.cell_id}.png'
+                caminho_completo_segmentado = os.path.join("segmentation_images", nome_arquivo_segmentado)
+                if imagem_recortada is not None:
+                    cv2.imwrite(caminho_completo_segmentado, imagem_recortada)
+            else:
+                print(f"Coordenadas fora dos limites: ({x}, {y})")
+        self.caracterizar_nucleos(sub_images_segmentadas)
         return sub_images_segmentadas
 
 # Caracterização
     def caracterizar_nucleos(self):
-        resultados_df = pd.DataFrame(columns=['area', 'perimetro', 'circunferencia','raio_maximo','raio_minimo','curva_phi_s','coordenada_x', 'coordenada_y'])
-        #for sub_image in sub_images:
-        image = Image.open(self.caminho_imagem)
-        imagem_cinza = cv2.cvtColor(np.array(image), cv2.COLOR_BGR2GRAY)
-        _,imagem_binaria = cv2.threshold(imagem_cinza, 128,255, cv2.THRESH_BINARY)
-        caracterizacao = measure.label(imagem_binaria,background = 0)
+        resultados_df = pd.DataFrame(columns=['area', 'perimetro', 'circunferencia','raio_maximo','raio_minimo','coordenada_x', 'coordenada_y'])
+        sub_images = os.listdir(".\segmentation_images")
 
-        for regiao in regionprops(caracterizacao):
-            area = regiao.area
-            perimetro = regiao.perimeter
-            circunferencia = (4 * np.pi * area) / (perimetro ** 2)
-            raio_maximo = perimetro / (2 * np.pi)
-            raio_minimo = np.sqrt(area / np.pi)
-            curva_phi_s = (4 * np.pi * area) / (perimetro ** 2)
-            coordenadas = regiao.coords
-            ponto_nucleo = np.mean(coordenadas, axis=0)
-            coordenada_x, coordenada_y = ponto_nucleo[0], ponto_nucleo[1]
-            resultados_df.loc[len(resultados_df)] = [area, perimetro, circunferencia,raio_maximo,raio_minimo,curva_phi_s,coordenada_x,coordenada_y]
+        
+        for sub_image in sub_images:
+            image = Image.open(".\\segmentation_images\\"+sub_image)
+            imagem_cinza = cv2.cvtColor(np.array(image), cv2.COLOR_BGR2GRAY)
+            _,imagem_binaria = cv2.threshold(imagem_cinza, 128,255, cv2.THRESH_BINARY)
+            caracterizacao = measure.label(imagem_binaria,background = 0)
+
+            for regiao in regionprops(caracterizacao):
+                area = regiao.area
+                perimetro = regiao.perimeter
+                if perimetro != 0:
+                    circunferencia = (4 * np.pi * area) / (perimetro ** 2)
+                else:
+                    circunferencia = 0
+                raio_maximo = perimetro / (2 * np.pi)
+                raio_minimo = np.sqrt(area / np.pi)
+                coordenadas = regiao.coords
+                ponto_nucleo = np.mean(coordenadas, axis=0)
+                coordenada_x, coordenada_y = ponto_nucleo[0], ponto_nucleo[1]
+                resultados_df.loc[len(resultados_df)] = [area, perimetro, circunferencia,raio_maximo,raio_minimo,coordenada_x,coordenada_y]
 
         resultados_df.to_csv('resultados_caracterizacao.csv', index=False)
 
 # Classificação
-    def classificar_nucleos(self):
-        tabela1_path = "resultados_caracterizacao.csv"
-        dados_tabela1 = pd.read_csv(tabela1_path)
+    # def classificar_nucleos(self):
+        # tabela1_path = "resultados_caracterizacao.csv"
+        # dados_tabela1 = pd.read_csv(tabela1_path)
 
-        tabela2_path = "classifications.csv"
-        dados_tabela2 = pd.read_csv(tabela2_path)
+        # tabela2_path = "classifications.csv"
+        # dados_tabela2 = pd.read_csv(tabela2_path)
 
-        dados_completos = pd.merge(dados_tabela1, dados_tabela2, left_on=['coordenada_x', 'coordenada_y'], right_on=['nucleus_x', 'nucleus_y'], how='inner')
+        # dados_completos = pd.merge(dados_tabela1, dados_tabela2, left_on=['coordenada_x', 'coordenada_y'], right_on=['nucleus_x', 'nucleus_y'], how='inner')
 
-        caracteristicas = dados_completos[['area', 'perimetro', 'circunferencia', 'raio_maximo','raio_minimo','curva_phi_s', 'coordenada_x', 'coordenada_y']]
-        rotulos = dados_completos['bethesda_system']
+        # caracteristicas = dados_completos[['area', 'perimetro', 'circunferencia', 'raio_maximo','raio_minimo', 'coordenada_x', 'coordenada_y']]
+        # rotulos = dados_completos['bethesda_system']
 
-        modelo = RandomForestClassifier(n_estimators=100, random_state=42)
-        modelo.fit(caracteristicas, rotulos)
+        # modelo = RandomForestClassifier(n_estimators=100, random_state=42)
+        # modelo.fit(caracteristicas, rotulos)
 
-        acuracia = metrics.accuracy_score(rotulos, modelo)
-        print(f'Acurácia do modelo: {acuracia}')
+        # acuracia = metrics.accuracy_score(rotulos, modelo)
+        # print(f'Acurácia do modelo: {acuracia}')
 
 
-        dados_tabela1['classificacao_nucleo'] = modelo.predict(dados_tabela1[['area', 'perimetro', 'circunferencia', 'raio_maximo','raio_minimo', 'curva_phi_s', 'coordenada_x', 'coordenada_y']])
+        # dados_tabela1['classificacao_nucleo'] = modelo.predict(dados_tabela1[['area', 'perimetro', 'circunferencia', 'raio_maximo','raio_minimo', 'coordenada_x', 'coordenada_y']])
 
-        # Salvar os resultados
-        resultados_path = "resultados.csv"
-        dados_tabela1.to_csv(resultados_path, index=False)
-    
-       
+        # # Salvar os resultados
+        # resultados_path = "resultados.csv"
+        # dados_tabela1.to_csv(resultados_path, index=False)
+
+# utils
+    def obter_informacoes_csv(self):
+        img_name = os.path.basename(self.caminho_imagem)
+        
+        # Carregue o arquivo CSV em um DataFrame
+        df = pd.read_csv('classifications.csv')
+
+        # Filtrar o DataFrame com base na condição do image_filename
+        resultados_filtrados = df[df['image_filename'] == img_name]
+        
+        return resultados_filtrados
+      
+    def comparar_centros(self, centros, output_file='distancias.txt'):
+        coordenadas_nucleos_csv = self.obter_informacoes_csv()[['nucleus_x', 'nucleus_y']]
+        distancias = []
+
+        for centro in centros:
+            distancia_minima = float('inf')
+            for _, coordenada in coordenadas_nucleos_csv.iterrows():
+                distancia = math.sqrt((centro[0] - coordenada['nucleus_x'])**2 + (centro[1] - coordenada['nucleus_y'])**2)
+                if distancia < distancia_minima:
+                    distancia_minima = distancia
+
+            distancias.append(distancia_minima)
+
+        # Salvar distâncias em um arquivo TXT
+        with open(output_file, 'w') as file:
+            for distancia in distancias:
+                file.write(f'{distancia}\n')
+
+        return distancias
 # main loop
 if __name__ == "__main__":
     root = tk.Tk()
