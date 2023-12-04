@@ -286,13 +286,13 @@ class InterfaceGrafica:
         dados_csv_path = 'classifications.csv'
         dados_csv = pd.read_csv(dados_csv_path)
 
-        for linha in dados_csv.iterrows():
+        for indice, linha in dados_csv.iterrows():
             cell_id = str(linha['cell_id'])
             caminho_image = None
 
             # Procura a imagem correspondente ao cell_id
             for arquivo in os.listdir(imagens_segmentadas):
-                if arquivo.startswith(cell_id) and arquivo.endswith('.png'):
+                if arquivo == f"{cell_id}.png":
                     caminho_image = os.path.join(imagens_segmentadas, arquivo)
                     break
 
