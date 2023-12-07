@@ -52,4 +52,3 @@ def classificar_nucleos(self):
 
 def caracterizar_nucleos(self):
     return
-

@@ -5,11 +5,13 @@ import tkinter as tk
 from tkinter import ttk
 from tkinter import filedialog
 from PIL import Image, ImageTk
+from matplotlib import pyplot as plt
 import pandas as pd
 import cv2
 import numpy as np
 from skimage import measure
 from skimage.measure import regionprops
+import seaborn as sns
 
 
 class InterfaceGrafica:
@@ -68,12 +70,16 @@ class InterfaceGrafica:
         botao_segmentar.pack()
         
         # Botão de caracterizar
-        botao_caracterizar = tk.Button(self.root, text="caracterizar nucleos", command=self.caracterizar_nucleos)
+        botao_caracterizar = tk.Button(self.root, text="Caracterizar nucleos", command=self.caracterizar_nucleos)
         botao_caracterizar.pack()
         
         # Botão de classificar
-        botao_classificar = tk.Button(self.root, text="caracterizar nucleos", command=self.classificar_nucleos)
+        botao_classificar = tk.Button(self.root, text="Classificar nucleos", command=self.classificar_nucleos)
         botao_classificar.pack()
+
+        # Botão de classificar
+        botao_grafico = tk.Button(self.root, text="Gráfico de disperção", command=self.grafico_dispersao)
+        botao_grafico.pack()
         
 
     def abrir_imagem(self):
@@ -247,36 +253,37 @@ class InterfaceGrafica:
 
 # Caracterização
     def caracterizar_nucleos(self):
-        resultados_df = pd.DataFrame(columns=['area', 'perimetro', 'circunferencia','compacidade', 'excentricidade'])
+        resultados_df = pd.DataFrame(columns=['id','area', 'perimetro', 'circunferencia','compacidade', 'excentricidade'])
         sub_images = os.listdir(".\segmentation_images")
 
         for sub_image in sub_images:
+
+            id = os.path.splitext(os.path.basename(sub_image))[0]
+
             image = Image.open(".\\segmentation_images\\"+sub_image)
             imagem_cinza = cv2.cvtColor(np.array(image), cv2.COLOR_BGR2GRAY)
             _,imagem_binaria = cv2.threshold(imagem_cinza, 128,255, cv2.THRESH_BINARY)
-            caracterizacao = measure.label(imagem_binaria,background = 0)
+            caracterizacao = measure.label(imagem_binaria,background = 1)
 
             for regiao in regionprops(caracterizacao):
                 area = regiao.area
                 perimetro = regiao.perimeter
                 if perimetro != 0:
                     circunferencia = (perimetro ** 2)/(4 * np.pi * area) 
+                    compacidade = (4 * np.pi * area) / (perimetro ** 2)
                 else:
                     circunferencia = 0
-                compacidade = (4 * np.pi * area) / (perimetro ** 2)
+                    compacidade = (4 * np.pi * area) / (perimetro ** 2)
                 
                 # Calcular momentos da região
-                momentos = regiao.moments_central
-            
-                # Calcular semi-eixos
-                a = np.sqrt(2 * (momentos[2, 0] + momentos[0, 2] + np.sqrt((momentos[2, 0] - momentos[0, 2])**2 + 4 * momentos[1, 1]**2 - 2 * (momentos[2, 0] + momentos[0, 2]) * (momentos[2, 0] + momentos[0, 2]))))
-                b = np.sqrt(2 * (momentos[2, 0] + momentos[0, 2] - np.sqrt((momentos[2, 0] - momentos[0, 2])**2 + 4 * momentos[1, 1]**2 - 2 * (momentos[2, 0] + momentos[0, 2]) * (momentos[2, 0] + momentos[0, 2]))))
+                momentos = cv2.moments(imagem_cinza)
+                a = momentos['mu20']
+                b = momentos['mu02']
+                
+                excentricidade = np.sqrt(1 - (a / b))
 
-                # Calcular excentricidade
-                excentricidade = np.sqrt(1 - (b**2) / (a**2))
+                resultados_df.loc[len(resultados_df)] = [id,area, perimetro, circunferencia,compacidade,excentricidade]
 
-                resultados_df.loc[len(resultados_df)] = [area, perimetro, circunferencia,compacidade,excentricidade]
-        print(resultados_df.shape)
         resultados_df.to_csv('resultados_caracterizacao.csv', index=False)
         self.exibir_tabela('resultados_caracterizacao.csv')
 
@@ -304,6 +311,33 @@ class InterfaceGrafica:
 
                 novo_caminho = os.path.join(subpasta, f"{cell_id}.png")
                 shutil.move(caminho_image, novo_caminho)
+
+# Gráfico de disperção
+    def grafico_dispersao(self):
+        dados_caracteristicas = pd.read_csv('resultados_caracterizacao.csv')  # Substitua pelo caminho correto
+
+        # Carregue os dados do item 1
+        dados_imagens = pd.read_csv('classifications.csv')  # Substitua pelo caminho correto
+
+        # Mesclar os dados com base no ID
+        dados_combinados = pd.merge(dados_caracteristicas, dados_imagens, left_on='id', right_on='cell_id')
+
+        # Defina cores para as classes
+        cores = {'ASC-US': 'pink', 'SCC': 'red', 'Negative for intraepithelial lesion': 'black', 'LSIL': 'blue', 'ASC-H': 'green', 'HSIL': 'yellow'}
+
+        # Plote o scatterplot
+        plt.figure(figsize=(10, 8))
+        sns.scatterplot(x='area', y='compacidade', hue='bethesda_system', data=dados_combinados, palette=cores, legend='full', alpha=0.7)
+        plt.title('Gráfico de Dispersão das Características')
+        plt.xlabel('Área')
+        plt.ylabel('Compacidade')
+
+        for id_unico in dados_combinados['id'].unique():
+            filtro_id = dados_combinados['id'] == id_unico
+            ponto = dados_combinados.loc[filtro_id, ['area', 'compacidade', 'bethesda_system']].iloc[0]
+            plt.scatter(ponto['area'], ponto['compacidade'], color=cores[ponto['bethesda_system']], s=50, marker='x')
+
+        plt.show()
 
 # utils
     def obter_informacoes_csv(self):
@@ -362,6 +396,10 @@ class InterfaceGrafica:
         tree.pack()
 
         root.mainloop()
+
+
+################################## N1 = 0
+################################## N2 = 1
 
 # main loop
 if __name__ == "__main__":
